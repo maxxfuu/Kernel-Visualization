@@ -17,7 +17,16 @@ export function HeroPreview() {
       </div>
 
       <div className="mt-10 flex items-center justify-center gap-2">
-        <Button>
+        <Button
+          render={
+            <a
+              href="https://github.com/maxxfuu/Kernel-Visualization"
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          }
+          nativeButton={false}
+        >
           <GithubIcon data-icon="inline-start" className="size-4" />
           View on GitHub
         </Button>
