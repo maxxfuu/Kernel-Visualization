@@ -23,10 +23,13 @@ export interface ParamDecl extends NodeBase {
   paramType: ParamType;
 }
 
+export type KernelQualifier = "global" | "device" | "host" | null;
+
 export interface FunctionDecl extends NodeBase {
   type: "FunctionDecl";
   name: string;
   returnType: "void" | ScalarType;
+  qualifier: KernelQualifier;
   params: ParamDecl[];
   body: BlockStmt;
 }
@@ -41,6 +44,10 @@ export interface VarDeclStmt extends NodeBase {
   varType: ScalarType;
   name: string;
   init: Expr | null;
+  /** Non-null for a local array declaration, e.g. `float tile[256];` -the literal element count. */
+  arraySize: number | null;
+  /** `__shared__ float tile[256];` -block-scoped memory, allocated once per block, shared by every thread in it. */
+  shared: boolean;
 }
 
 export interface ExprStmt extends NodeBase {
@@ -150,6 +157,22 @@ export interface Literal extends NodeBase {
   litType: ScalarType;
 }
 
+/** `threadIdx.x` / `blockIdx.y` / `blockDim.z` / `gridDim.x` -the only member-access CUDA needs. */
+export interface MemberExpr extends NodeBase {
+  type: "MemberExpr";
+  object: Identifier;
+  property: "x" | "y" | "z";
+}
+
+/** Only `__syncthreads()` is actually executable (handled specially at the statement level as a
+ * barrier); any other callee resolves to a "unknown function" error -this app doesn't support
+ * calling user-defined functions. */
+export interface CallExpr extends NodeBase {
+  type: "CallExpr";
+  callee: string;
+  args: Expr[];
+}
+
 export type Expr =
   | BinaryExpr
   | LogicalExpr
@@ -157,6 +180,8 @@ export type Expr =
   | UpdateExpr
   | AssignExpr
   | IndexExpr
+  | MemberExpr
+  | CallExpr
   | Identifier
   | Literal;
 

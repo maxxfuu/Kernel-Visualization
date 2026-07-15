@@ -13,7 +13,7 @@ import {
 } from "@uiw/codemirror-themes-all";
 import type { EditorThemeName } from "@/state/editorSettingsStore";
 
-/** `null` means "auto" — no override, falls back to the app-adaptive theme already set up in CodeEditor. */
+/** `null` means "auto" -no override, falls back to the app-adaptive theme already set up in CodeEditor. */
 export function resolveEditorTheme(name: EditorThemeName): Extension | null {
   switch (name) {
     case "githubLight":

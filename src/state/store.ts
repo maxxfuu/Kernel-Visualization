@@ -3,6 +3,7 @@ import {
   ConfigError,
   FillStrategy,
   FunctionSignature,
+  LaunchConfig,
   ParseError,
   Program,
   RunConfig,
@@ -30,6 +31,7 @@ export type RunStatus = "no-source" | "parse-error" | "config-error" | "ready" |
 const DEFAULT_BUFFER_SIZE = 16;
 const DEFAULT_SCALAR_VALUE = 4;
 const DEFAULT_RANDOM_RANGE: [number, number] = [-2, 2];
+const DEFAULT_LAUNCH_CONFIG: LaunchConfig = { gridDimX: 1, blockDimX: 8 };
 
 export const DEFAULT_SOURCE = `void matmul_at_b(float *A, float *B, float *C, int m, int n, int k) {
   for (int i = 0; i < n; i++) {
@@ -39,6 +41,14 @@ export const DEFAULT_SOURCE = `void matmul_at_b(float *A, float *B, float *C, in
         C[i * k + j] += A[l * n + i] * B[l * k + j];
       }
     }
+  }
+}
+`;
+
+export const DEFAULT_CUDA_SOURCE = `__global__ void vector_add(float *a, float *b, float *c, int n) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    c[idx] = a[idx] + b[idx];
   }
 }
 `;
@@ -65,12 +75,16 @@ function defaultBufferConfigForm(): BufferConfigForm {
   return { size: DEFAULT_BUFFER_SIZE, fillStrategy: "sequential", manualValues: [], randomRange: DEFAULT_RANDOM_RANGE };
 }
 
-/** Fingerprint of "what was last initialized" — buffer sizes + scalar values. Comparing this
+/** Fingerprint of "what was last initialized" -buffer sizes + scalar values. Comparing this
  * against the current config tells the UI whether an existing run is stale (needs re-Initialize)
  * or still matches (ready to Run). */
-export function computeConfigSignature(bufferConfigs: Record<string, BufferConfigForm>, scalarConfigs: Record<string, number>): string {
+export function computeConfigSignature(
+  bufferConfigs: Record<string, BufferConfigForm>,
+  scalarConfigs: Record<string, number>,
+  launchConfig: LaunchConfig,
+): string {
   const sizes = Object.fromEntries(Object.entries(bufferConfigs).map(([name, cfg]) => [name, cfg.size]));
-  return JSON.stringify({ sizes, scalarConfigs });
+  return JSON.stringify({ sizes, scalarConfigs, launchConfig });
 }
 
 // --- Multi-tab support ---
@@ -80,6 +94,9 @@ export function computeConfigSignature(bufferConfigs: Record<string, BufferConfi
 // restores the incoming tab's snapshot (or a fresh blank session for a brand-new tab).
 export interface TabMeta {
   id: string;
+  /** Manually-set file name (e.g. "vector_add.cu"). Undefined falls back to the parsed
+   * function name (or "Tab N") via `getTabDisplayTitle`. */
+  title?: string;
 }
 
 type TabSnapshot = Pick<
@@ -91,6 +108,7 @@ type TabSnapshot = Pick<
   | "selectedFunctionName"
   | "bufferConfigs"
   | "scalarConfigs"
+  | "launchConfig"
   | "runId"
   | "steps"
   | "runErrors"
@@ -106,7 +124,7 @@ type TabSnapshot = Pick<
   | "scrubbing"
 >;
 
-let nextTabId = 2; // tab-1 is the initial tab created below
+let nextTabId = 3; // tab-1 and tab-2 are the initial tabs created below
 
 function blankTabSnapshot(): TabSnapshot {
   return {
@@ -117,6 +135,7 @@ function blankTabSnapshot(): TabSnapshot {
     selectedFunctionName: null,
     bufferConfigs: {},
     scalarConfigs: {},
+    launchConfig: DEFAULT_LAUNCH_CONFIG,
     runId: 0,
     steps: [],
     runErrors: [],
@@ -142,6 +161,7 @@ function snapshotOf(state: KernelVizState): TabSnapshot {
     selectedFunctionName,
     bufferConfigs,
     scalarConfigs,
+    launchConfig,
     runId,
     steps,
     runErrors,
@@ -164,6 +184,7 @@ function snapshotOf(state: KernelVizState): TabSnapshot {
     selectedFunctionName,
     bufferConfigs,
     scalarConfigs,
+    launchConfig,
     runId,
     steps,
     runErrors,
@@ -180,10 +201,31 @@ function snapshotOf(state: KernelVizState): TabSnapshot {
   };
 }
 
-/** Display title for a tab: its parsed function name if it has one, else "Tab N". */
+/** Display title for a tab: its manually-set file name, else its parsed function name, else "Tab N". */
 export function getTabDisplayTitle(state: KernelVizState, tabId: string, index: number): string {
+  const manual = state.tabs.find((t) => t.id === tabId)?.title;
+  if (manual) return manual;
   const signatures = tabId === state.activeTabId ? state.functionSignatures : state.tabSnapshots[tabId]?.functionSignatures;
   return signatures?.[0]?.name ?? `Tab ${index + 1}`;
+}
+
+/** A tab's source, whether it's the active tab (live top-level field) or not (its snapshot). */
+export function getTabSource(state: KernelVizState, tabId: string): string {
+  return tabId === state.activeTabId ? state.source : (state.tabSnapshots[tabId]?.source ?? "");
+}
+
+/** Full snapshot for a pre-loaded default tab (parses `source` and derives its config forms). */
+function buildDefaultTabSnapshot(source: string): TabSnapshot {
+  const { program, errors } = parseSource(source);
+  const derived = deriveSignaturesAndConfigs(program, null, {}, {});
+  return {
+    ...blankTabSnapshot(),
+    source,
+    program,
+    parseErrors: errors,
+    ...derived,
+    status: errors.length > 0 ? "parse-error" : "ready",
+  };
 }
 
 interface KernelVizState {
@@ -200,6 +242,8 @@ interface KernelVizState {
   selectedFunctionName: string | null;
   bufferConfigs: Record<string, BufferConfigForm>;
   scalarConfigs: Record<string, number>;
+  /** Grid/block launch dimensions -only meaningful (and only shown) for `__global__` kernels. */
+  launchConfig: LaunchConfig;
 
   // --- run result (active tab only) ---
   runId: number;
@@ -223,6 +267,7 @@ interface KernelVizState {
   selectFunction: (name: string) => void;
   updateBufferConfig: (name: string, patch: Partial<BufferConfigForm>) => void;
   updateScalarConfig: (name: string, value: number) => void;
+  updateLaunchConfig: (patch: Partial<LaunchConfig>) => void;
   startRun: () => void;
   resetRun: () => void;
   play: () => void;
@@ -241,6 +286,8 @@ interface KernelVizState {
   createTab: () => void;
   closeTab: (id: string) => void;
   switchTab: (id: string) => void;
+  renameTab: (id: string, title: string) => void;
+  importTab: (source: string) => void;
 }
 
 function deriveSignaturesAndConfigs(
@@ -274,12 +321,16 @@ function initialSetupState() {
 }
 
 export const useKernelVizStore = create<KernelVizState>((set, get) => ({
-  tabs: [{ id: "tab-1" }],
+  tabs: [
+    { id: "tab-1", title: "matmul_at_b.c" },
+    { id: "tab-2", title: "vector_add.cu" },
+  ],
   activeTabId: "tab-1",
-  tabSnapshots: {},
+  tabSnapshots: { "tab-2": buildDefaultTabSnapshot(DEFAULT_CUDA_SOURCE) },
 
   ...initialSetupState(),
 
+  launchConfig: DEFAULT_LAUNCH_CONFIG,
   runId: 0,
   steps: [],
   runErrors: [],
@@ -326,8 +377,12 @@ export const useKernelVizStore = create<KernelVizState>((set, get) => ({
     set((s) => ({ scalarConfigs: { ...s.scalarConfigs, [name]: value } }));
   },
 
+  updateLaunchConfig: (patch) => {
+    set((s) => ({ launchConfig: { ...s.launchConfig, ...patch } }));
+  },
+
   startRun: () => {
-    const { program, selectedFunctionName, bufferConfigs, scalarConfigs, functionSignatures } = get();
+    const { program, selectedFunctionName, bufferConfigs, scalarConfigs, launchConfig, functionSignatures } = get();
     if (!program || !selectedFunctionName) return;
     const sig = functionSignatures.find((s) => s.name === selectedFunctionName);
     if (!sig) return;
@@ -346,12 +401,22 @@ export const useKernelVizStore = create<KernelVizState>((set, get) => ({
       scalars: sig.params
         .filter((p) => p.type === "int" || p.type === "float")
         .map((p) => ({ name: p.name, type: p.type as "int" | "float", value: scalarConfigs[p.name] ?? DEFAULT_SCALAR_VALUE })),
+      ...(sig.isKernel ? { launch: launchConfig } : {}),
     };
 
     const configErrors = validateConfig(program, runConfig);
     if (configErrors.length > 0) {
       set({ configErrors, status: "config-error" });
       return;
+    }
+
+    // __shared__ arrays aren't device-memory params, so they get no entry above -but the
+    // interpreter still reports their (zeroed) starting contents in finalMemory/mem-write
+    // replay needs a baseline, so backfill one here for every shared array the UI knows about.
+    for (const shared of sig.sharedArrays) {
+      if (!(shared.name in initialBufferValues)) {
+        initialBufferValues[shared.name] = new Array(shared.size).fill(0);
+      }
     }
 
     const result = runInterpreter(program, runConfig);
@@ -365,7 +430,7 @@ export const useKernelVizStore = create<KernelVizState>((set, get) => ({
       initialBufferValues,
       keyframes,
       status: "complete",
-      lastRunSignature: computeConfigSignature(bufferConfigs, scalarConfigs),
+      lastRunSignature: computeConfigSignature(bufferConfigs, scalarConfigs, launchConfig),
       currentStepIndex: 0,
       isPlaying: false,
     }));
@@ -476,6 +541,22 @@ export const useKernelVizStore = create<KernelVizState>((set, get) => ({
       const nextActive = remainingTabs[Math.min(closedIndex, remainingTabs.length - 1)];
       const target = remainingSnapshots[nextActive.id] ?? blankTabSnapshot();
       return { tabs: remainingTabs, tabSnapshots: remainingSnapshots, activeTabId: nextActive.id, ...target };
+    });
+  },
+
+  renameTab: (id, title) => {
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, title } : t)) }));
+  },
+
+  importTab: (source) => {
+    set((s) => {
+      const newId = `tab-${nextTabId++}`;
+      return {
+        tabs: [...s.tabs, { id: newId, title: "untitled" }],
+        tabSnapshots: { ...s.tabSnapshots, [s.activeTabId]: snapshotOf(s) },
+        activeTabId: newId,
+        ...buildDefaultTabSnapshot(source),
+      };
     });
   },
 }));

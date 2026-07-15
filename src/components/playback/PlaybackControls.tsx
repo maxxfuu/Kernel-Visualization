@@ -8,6 +8,8 @@ import { ScrubBar } from "./ScrubBar";
 import { usePlaybackTicker } from "@/hooks/usePlaybackTicker";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { EditorSettingsPanel } from "@/components/editor/EditorSettingsPanel";
+import { ExportPanel } from "@/components/editor/ExportPanel";
+import { ImportPanel } from "@/components/editor/ImportPanel";
 
 const SPEEDS = [0.5, 1, 2, 4, 8, 16];
 
@@ -63,6 +65,11 @@ export function PlaybackControls() {
           ))}
         </SelectContent>
       </Select>
+
+      <div className="ml-auto flex items-center gap-2">
+        <ImportPanel />
+        <ExportPanel />
+      </div>
     </div>
   );
 }

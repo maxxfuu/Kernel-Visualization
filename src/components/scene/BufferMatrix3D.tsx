@@ -44,7 +44,7 @@ export function BufferMatrix3D({ name, xOffset, shape }: BufferMatrix3DProps) {
     // Physical position within the buffer's own natural (untransposed) row-major layout.
     const physicalRow = Math.floor(rem / cols);
     const physicalCol = rem % cols;
-    // Transposing swaps which physical axis maps to the display row vs. column — a pure
+    // Transposing swaps which physical axis maps to the display row vs. column -a pure
     // relabeling of position, never a rewrite of the underlying flat buffer.
     const displayRow = transposed ? physicalCol : physicalRow;
     const displayCol = transposed ? physicalRow : physicalCol;
@@ -71,7 +71,7 @@ export function BufferMatrix3D({ name, xOffset, shape }: BufferMatrix3DProps) {
 
   return (
     <group>
-      <Html position={[xOffset, labelY, labelZ]} center distanceFactor={12} style={{ pointerEvents: "none" }}>
+      <Html position={[xOffset, labelY, labelZ]} center distanceFactor={12} zIndexRange={[1, 0]} style={{ pointerEvents: "none" }}>
         <div className="whitespace-nowrap text-center text-xs font-medium" style={{ color: palette.labelText }}>
           <span className="font-mono">{name}</span>
           <span className="ml-1.5" style={{ color: palette.labelSubtext }}>

@@ -16,7 +16,7 @@ export function LandingFooter() {
       <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
           <p className="text-sm text-muted-foreground">
-            Kernel Visualization — built by{" "}
+            Kernel Visualization - built by{" "}
             <a
               href="https://maxxfuu.com"
               target="_blank"
@@ -42,7 +42,7 @@ export function LandingFooter() {
           </div>
         </div>
         <p className="mt-6 text-center text-sm text-muted-foreground">
-          © 2026 Kernel Visualization.
+          © 2026 Visual Kernels.
         </p>
       </div>
     </footer>

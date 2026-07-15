@@ -1,6 +1,9 @@
 import type { BlockStmt, Expr, FunctionDecl, Program, Stmt } from "./ast";
 import type { ParseError } from "./errors";
 
+const CUDA_BUILTINS = ["threadIdx", "blockIdx", "blockDim", "gridDim"];
+const KNOWN_CALLEES = ["__syncthreads"];
+
 class ResolveScope {
   private names = new Set<string>();
   constructor(private readonly parent: ResolveScope | null) {}
@@ -24,6 +27,9 @@ export function resolveProgram(program: Program): { errors: ParseError[] } {
 function resolveFunction(fn: FunctionDecl, errors: ParseError[]) {
   const fnScope = new ResolveScope(null);
   for (const param of fn.params) fnScope.declare(param.name);
+  if (fn.qualifier === "global" || fn.qualifier === "device") {
+    for (const name of CUDA_BUILTINS) fnScope.declare(name);
+  }
   resolveBlock(fn.body, fnScope, errors);
 }
 
@@ -110,6 +116,28 @@ function resolveExpr(expr: Expr, scope: ResolveScope, errors: ParseError[]) {
     case "IndexExpr":
       resolveExpr(expr.object, scope, errors);
       resolveExpr(expr.index, scope, errors);
+      return;
+    case "MemberExpr":
+      resolveExpr(expr.object, scope, errors);
+      if (!CUDA_BUILTINS.includes(expr.object.name)) {
+        errors.push({
+          tier: "parse",
+          message: `'${expr.object.name}.${expr.property}' isn't supported -member access only works on threadIdx/blockIdx/blockDim/gridDim`,
+          line: expr.loc.startLine,
+          col: expr.loc.startCol,
+        });
+      }
+      return;
+    case "CallExpr":
+      if (!KNOWN_CALLEES.includes(expr.callee)) {
+        errors.push({
+          tier: "parse",
+          message: `Unknown function '${expr.callee}' -only __syncthreads() is supported, and calling user-defined functions isn't`,
+          line: expr.loc.startLine,
+          col: expr.loc.startCol,
+        });
+      }
+      for (const arg of expr.args) resolveExpr(arg, scope, errors);
       return;
   }
 }

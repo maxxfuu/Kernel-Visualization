@@ -41,6 +41,7 @@ const SINGLE_CHAR_OPERATORS: Record<string, TokenType> = {
   "]": TokenType.RBracket,
   ";": TokenType.Semi,
   ",": TokenType.Comma,
+  ".": TokenType.Dot,
 };
 
 function isDigit(ch: string): boolean {

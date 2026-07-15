@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { ConfigPanel } from "@/components/config/ConfigPanel";
+import { InfoPanel } from "./InfoPanel";
 import { ThemeToggle } from "./ThemeToggle";
 import { useKernelVizStore } from "@/state/store";
 
@@ -19,9 +20,10 @@ export function Header() {
           </Link>
         </h1>
         {parseErrors.length > 0 && <Badge variant="destructive">{parseErrors.length} parse error(s)</Badge>}
-        {truncated && <Badge variant="secondary">truncated — possible infinite loop</Badge>}
+        {truncated && <Badge variant="secondary">truncated -possible infinite loop</Badge>}
       </div>
       <div className="flex items-center gap-2">
+        <InfoPanel />
         <ThemeToggle />
         <ConfigPanel />
       </div>

@@ -14,6 +14,7 @@ import { CELL_SPACING, DARK_PALETTE, LIGHT_PALETTE } from "./colors";
 import { autoShape, displayDims, Shape, ShapeMode } from "./shape";
 import { computeMatmulStatus } from "./matmulValidation";
 import { ScalarPanel } from "./ScalarPanel";
+import { ThreadLanesPanel } from "./ThreadLanesPanel";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Toggle } from "@/components/ui/toggle";
@@ -36,8 +37,8 @@ function ShapeControl({
   onChange: (next: Shape) => void;
 }) {
   return (
-    <div className="pointer-events-auto flex flex-col gap-2 rounded-lg border border-border bg-card/95 px-3 py-2 text-sm text-foreground shadow-md backdrop-blur-sm">
-      <div className="flex items-center gap-2.5">
+    <div className="pointer-events-auto flex w-full flex-col gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-md backdrop-blur-sm">
+      <div className="flex flex-wrap items-center gap-2.5">
         <span className="font-mono font-semibold">{name}</span>
         <ToggleGroup
           size="sm"
@@ -60,7 +61,7 @@ function ShapeControl({
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2.5">
+      <div className="flex flex-wrap items-center gap-2.5">
         {shape.mode === "3d" && (
           <>
             <Input
@@ -126,6 +127,10 @@ export function KernelScene() {
 
   const sig = functionSignatures.find((s) => s.name === selectedFunctionName);
   const bufferParams = useMemo(() => sig?.params.filter((p) => p.type === "int*" || p.type === "float*") ?? [], [sig]);
+  // __shared__ arrays aren't function params, so they render as extra panels alongside the
+  // device buffers -same cell-level visualization, but with no matmul/transpose controls
+  // (block-scoped shared memory doesn't participate in that concept).
+  const sharedArrays = useMemo(() => sig?.sharedArrays ?? [], [sig]);
 
   // Only explicit user overrides live in state; buffers without one fall back to an
   // auto-computed square-ish 2D shape at render time (see `effectiveShape` below).
@@ -140,7 +145,7 @@ export function KernelScene() {
   // isMatmulLikeFunction) so it never fires for unrelated kernels like relu_backward.
   //
   // Once a run exists, the displayed shape for A/B MUST reflect the real m/n/k actually used
-  // by that run — otherwise "stepping through" shows a computation that doesn't match what's
+  // by that run -otherwise "stepping through" shows a computation that doesn't match what's
   // on screen. Before a run, shapes are free-form for pedagogical "would this multiply?"
   // exploration (see the toast/transpose-to-fix flow below).
   const hasRunDerivedDims =
@@ -176,7 +181,7 @@ export function KernelScene() {
   const rightShape = rightOperand ? effectiveShape(rightOperand.name) : null;
   const matmulStatus = computeMatmulStatus(selectedFunctionName, leftShape, rightShape);
 
-  // The output (and any further) buffer's shape is never independently chosen — it's always
+  // The output (and any further) buffer's shape is never independently chosen -it's always
   // C = A @ B's shape: rows from the left operand, cols from the right operand.
   const derivedOutputDims =
     matmulStatus.applicable && leftShape && rightShape
@@ -204,7 +209,7 @@ export function KernelScene() {
     if (matmulStatus.applicable && !matmulStatus.valid && leftShape && rightShape) {
       toast.error("Shapes can't be matrix-multiplied", {
         id: MATMUL_TOAST_ID,
-        description: `${leftOperand?.name}(${leftShape.rows}×${leftShape.cols}) × ${rightOperand?.name}(${rightShape.rows}×${rightShape.cols}) — try transposing one.`,
+        description: `${leftOperand?.name}(${leftShape.rows}×${leftShape.cols}) × ${rightOperand?.name}(${rightShape.rows}×${rightShape.cols}) -try transposing one.`,
       });
     } else {
       toast.dismiss(MATMUL_TOAST_ID);
@@ -220,11 +225,19 @@ export function KernelScene() {
     );
   }
 
+  // Panels = the device buffers (matmul-aware shape controls) followed by any __shared__
+  // arrays (auto-shaped, no transpose/matmul concept) -laid out and rendered as one list.
+  const panelNames = [...bufferParams.map((p) => p.name), ...sharedArrays.map((s) => s.name)];
+  const panelShapes = [
+    ...bufferParams.map((p, i) => shapeForIndex(i, p.name)),
+    ...sharedArrays.map((s) => shapeOverrides[s.name] ?? autoShape(s.size)),
+  ];
+
   // Slot width follows each buffer's actual on-screen footprint (display cols * spacing)
   // rather than a fixed width, so switching a buffer to 1D/3D or transposing it doesn't
   // overlap its neighbors.
   const MARGIN = 2.5;
-  const widths = bufferParams.map((p, i) => Math.max(displayDims(shapeForIndex(i, p.name)).cols * CELL_SPACING, 3));
+  const widths = panelShapes.map((shape) => Math.max(displayDims(shape).cols * CELL_SPACING, 3));
   const xOffsets: number[] = [];
   let cursor = 0;
   widths.forEach((w, i) => {
@@ -240,7 +253,7 @@ export function KernelScene() {
   const centeredXOffsets = xOffsets.map((x) => x - center);
 
   function transposeEnabledFor(index: number): boolean {
-    if (!matmulStatus.applicable) return true; // no matmul concept for this kernel — free display transform
+    if (!matmulStatus.applicable) return true; // no matmul concept for this kernel -free display transform
     if (index >= 2) return false; // output shape (and orientation) is fully derived
     if (index === 0) return hasRunDerivedDims ? true : matmulStatus.leftTransposeEnabled;
     return hasRunDerivedDims ? true : matmulStatus.rightTransposeEnabled;
@@ -257,23 +270,24 @@ export function KernelScene() {
     // z-index for depth-sorting) to this stacking context, so they can never climb above a
     // modal Dialog rendered outside it, no matter how large that computed z-index gets.
     <div className="relative isolate h-full w-full" style={{ backgroundColor: palette.background }}>
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap gap-3 p-3">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 grid grid-cols-[repeat(auto-fit,minmax(min(15rem,100%),1fr))] items-start gap-3 p-3">
         {bufferParams.map((p, i) => (
           <ShapeControl
             key={p.name}
             name={p.name}
-            shape={shapeForIndex(i, p.name)}
+            shape={panelShapes[i]}
             transposeEnabled={transposeEnabledFor(i)}
             dimsLocked={dimsLockedFor(i)}
             lockedHint={
               i >= 2
-                ? "Output shape = (left operand rows) × (right operand cols) — not independently settable."
+                ? "Output shape = (left operand rows) × (right operand cols) -not independently settable."
                 : "Locked to the m/n/k actually used by your last run."
             }
             onChange={(next) => setShapeOverrides((prev) => ({ ...prev, [p.name]: next }))}
           />
         ))}
         <ScalarPanel />
+        <ThreadLanesPanel />
       </div>
       <Canvas camera={{ position: [0, 9, 16], fov: 40 }} dpr={[1, 2]}>
         <color attach="background" args={[palette.background]} />
@@ -284,8 +298,8 @@ export function KernelScene() {
         <gridHelper args={[60, 60, palette.gridMajor, palette.gridMinor]} position={[0, -0.01, 0]} />
         <ScenePaletteProvider palette={palette}>
           <CellPositionsProvider>
-            {bufferParams.map((p, i) => (
-              <BufferMatrix3D key={p.name} name={p.name} xOffset={centeredXOffsets[i]} shape={shapeForIndex(i, p.name)} />
+            {panelNames.map((name, i) => (
+              <BufferMatrix3D key={name} name={name} xOffset={centeredXOffsets[i]} shape={panelShapes[i]} />
             ))}
             <OperationBeams />
           </CellPositionsProvider>

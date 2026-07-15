@@ -10,10 +10,20 @@ export interface ParamSignature {
   type: ParamType;
 }
 
+export interface SharedArraySignature {
+  name: string;
+  elementType: ScalarType;
+  size: number;
+}
+
 export interface FunctionSignature {
   name: string;
   returnType: "void" | ScalarType;
   params: ParamSignature[];
+  /** True for `__global__` functions -these launch with a thread/block grid instead of running once. */
+  isKernel: boolean;
+  /** `__shared__` arrays declared in the body -block-scoped memory the UI can visualize alongside device buffers. */
+  sharedArrays: SharedArraySignature[];
 }
 
 // --- Run configuration (how the UI supplies concrete buffer sizes/values + scalar params) ---
@@ -33,11 +43,19 @@ export interface ScalarConfig {
   value: number;
 }
 
+/** Grid/block launch dimensions -v1 only models the .x axis (blockDim.y/z, gridDim.y/z are 1). */
+export interface LaunchConfig {
+  gridDimX: number;
+  blockDimX: number;
+}
+
 export interface RunConfig {
   functionName: string;
   buffers: BufferConfig[];
   scalars: ScalarConfig[];
   maxSteps?: number; // default 1_000_000
+  /** Required (and only meaningful) when the target function is a `__global__` kernel. */
+  launch?: LaunchConfig;
 }
 
 // --- Step trace ---
@@ -62,7 +80,8 @@ export type StepEventKind =
   | "mem-read"
   | "mem-write"
   | "return"
-  | "exit-function";
+  | "exit-function"
+  | "barrier";
 
 export interface StepEventBase {
   seq: number;
@@ -122,7 +141,8 @@ export interface GenericEvent extends StepEventBase {
     | "loop-iter"
     | "loop-exit"
     | "return"
-    | "exit-function";
+    | "exit-function"
+    | "barrier";
 }
 
 export type StepEvent =

@@ -21,7 +21,7 @@ export interface MatmulStatus {
 /**
  * Checks whether the first two operand buffers (by convention, A and B) can be matrix-multiplied
  * given their current display shapes, and whether transposing either one (alone) would fix an
- * otherwise-invalid combination. Only meaningful for matmul-like kernels — see isMatmulLikeFunction.
+ * otherwise-invalid combination. Only meaningful for matmul-like kernels -see isMatmulLikeFunction.
  */
 export function computeMatmulStatus(functionName: string | null, left: Shape | null, right: Shape | null): MatmulStatus {
   if (!isMatmulLikeFunction(functionName) || !left || !right) {

@@ -6,7 +6,7 @@ export interface Shape {
   rows: number;
   cols: number;
   // Display-only: swaps rows/cols for layout and value lookup, without touching the underlying
-  // flat buffer. Only meaningful in 2D/3D mode — see matmulValidation.ts for why this exists.
+  // flat buffer. Only meaningful in 2D/3D mode -see matmulValidation.ts for why this exists.
   transposed: boolean;
 }
 

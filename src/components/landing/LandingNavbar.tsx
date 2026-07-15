@@ -9,8 +9,8 @@ export function LandingNavbar() {
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
         <span className="text-sm font-semibold tracking-tight">Kernel Visualization</span>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm">
-            Log In
+          <Button variant="default" size="sm">
+            Start Visualizing
           </Button>
           <LandingThemeToggle />
         </div>

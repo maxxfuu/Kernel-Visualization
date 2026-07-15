@@ -1,6 +1,6 @@
 import { parseSource as parseSourceInternal } from "./parser";
 import { resolveProgram } from "./resolve";
-import { run as runInternal, validateConfig as validateConfigInternal } from "./interpreter";
+import { run as runInternal, validateConfig as validateConfigInternal, findSharedArrayDecls } from "./interpreter";
 import type { Program } from "./ast";
 import type { ParseError, ConfigError } from "./errors";
 import type { FunctionSignature, RunConfig, RunResult, StepEvent } from "./types";
@@ -17,6 +17,12 @@ export function extractSignatures(program: Program): FunctionSignature[] {
     name: fn.name,
     returnType: fn.returnType,
     params: fn.params.map((p) => ({ name: p.name, type: p.paramType })),
+    isKernel: fn.qualifier === "global",
+    sharedArrays: findSharedArrayDecls(fn).map((decl) => ({
+      name: decl.name,
+      elementType: decl.varType,
+      size: decl.arraySize ?? 0,
+    })),
   }));
 }
 
@@ -49,11 +55,13 @@ export type {
   BufferConfig,
   FillStrategy,
   FunctionSignature,
+  LaunchConfig,
   LoopFrame,
   ParamSignature,
   RunConfig,
   RunResult,
   ScalarConfig,
+  SharedArraySignature,
   StepEvent,
   StepEventKind,
 } from "./types";

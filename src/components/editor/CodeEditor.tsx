@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Compartment, EditorState, Extension } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { indentUnit } from "@codemirror/language";
 import { indentWithTab } from "@codemirror/commands";
 import { basicSetup } from "codemirror";
@@ -16,9 +16,10 @@ import { resolveEditorTheme } from "./themes";
 const readOnlyCompartment = new Compartment();
 const vimCompartment = new Compartment();
 const indentCompartment = new Compartment();
+const lineNumberCompartment = new Compartment();
 // Mutually exclusive: exactly one of these two is active at a time. Both declare rules for the
 // same selectors (background, gutters, cursor, selection) at equal CSS specificity, so letting
-// both be active simultaneously turns into an unpredictable cascade tie — instead "auto" swaps
+// both be active simultaneously turns into an unpredictable cascade tie -instead "auto" swaps
 // the adaptive theme in and any concrete theme (Dracula, Nord, ...) swaps it out.
 const adaptiveColorCompartment = new Compartment();
 const userThemeCompartment = new Compartment();
@@ -27,7 +28,7 @@ function indentExtensions(tabSize: number) {
   return [indentUnit.of(" ".repeat(tabSize)), EditorState.tabSize.of(tabSize)];
 }
 
-// Structural chrome (sizing, font, focus outline) — applies regardless of which color theme
+// Structural chrome (sizing, font, focus outline) -applies regardless of which color theme
 // is active, since no theme package redeclares these.
 const structuralTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "13px" },
@@ -65,13 +66,30 @@ function colorExtensionsFor(themeName: EditorThemeName) {
   };
 }
 
+// Vim-style relative numbers: the cursor's own line stays absolute, every other line shows its
+// distance from it. Layered as a *second* `lineNumbers()` alongside basicSetup's default one --
+// CodeMirror merges `formatNumber` across all `lineNumbers()` extensions into a single gutter
+// rather than drawing a duplicate column, as long as only one of them sets it.
+function lineNumberExtensionsFor(relative: boolean): Extension[] {
+  if (!relative) return [];
+  return [
+    lineNumbers({
+      formatNumber: (lineNo, state) => {
+        const current = state.doc.lineAt(state.selection.main.head).number;
+        return lineNo === current ? String(lineNo) : String(Math.abs(lineNo - current));
+      },
+    }),
+  ];
+}
+
 interface EditorSettingsSnapshot {
   vimMode: boolean;
   tabSize: number;
   themeName: EditorThemeName;
+  relativeLineNumbers: boolean;
 }
 
-/** Full extension set for a fresh EditorState — used both at mount and when swapping tabs. */
+/** Full extension set for a fresh EditorState -used both at mount and when swapping tabs. */
 function buildExtensions(settings: EditorSettingsSnapshot, onDocChange: (doc: string) => void): Extension[] {
   const colors = colorExtensionsFor(settings.themeName);
   return [
@@ -80,6 +98,7 @@ function buildExtensions(settings: EditorSettingsSnapshot, onDocChange: (doc: st
     cpp(),
     keymap.of([indentWithTab]),
     indentCompartment.of(indentExtensions(settings.tabSize)),
+    lineNumberCompartment.of(lineNumberExtensionsFor(settings.relativeLineNumbers)),
     currentLineField,
     errorLinesField,
     stepHighlightTheme,
@@ -108,6 +127,7 @@ export function CodeEditor() {
   const themeName = useEditorSettingsStore((s) => s.themeName);
   const tabSize = useEditorSettingsStore((s) => s.tabSize);
   const vimMode = useEditorSettingsStore((s) => s.vimMode);
+  const relativeLineNumbers = useEditorSettingsStore((s) => s.relativeLineNumbers);
 
   // Mount once.
   useEffect(() => {
@@ -125,7 +145,7 @@ export function CodeEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Switching tabs swaps in a different document entirely — rebuild the EditorState (rather
+  // Switching tabs swaps in a different document entirely -rebuild the EditorState (rather
   // than dispatching a content-replace transaction) so undo history doesn't bleed between tabs.
   useEffect(() => {
     const view = viewRef.current;
@@ -187,6 +207,12 @@ export function CodeEditor() {
     if (!view) return;
     view.dispatch({ effects: vimCompartment.reconfigure(vimMode ? [vim()] : []) });
   }, [vimMode]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: lineNumberCompartment.reconfigure(lineNumberExtensionsFor(relativeLineNumbers)) });
+  }, [relativeLineNumbers]);
 
   return <div ref={containerRef} className="h-full min-h-0 overflow-hidden rounded-lg border border-border" />;
 }

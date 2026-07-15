@@ -1,4 +1,4 @@
-// Single import boundary between the UI and the interpreter package — everything else in the
+// Single import boundary between the UI and the interpreter package -everything else in the
 // app should import from here (or from the re-exported types), not from "@/interpreter" directly.
 export {
   parseSource,
@@ -13,6 +13,7 @@ export type {
   FillStrategy,
   FunctionSignature,
   InterpError,
+  LaunchConfig,
   LoopFrame,
   ParamSignature,
   ParseError,
@@ -22,6 +23,7 @@ export type {
   RuntimeError,
   RuntimeErrorKind,
   ScalarConfig,
+  SharedArraySignature,
   StepEvent,
   StepEventKind,
 } from "@/interpreter";

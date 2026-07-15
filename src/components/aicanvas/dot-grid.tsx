@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SPACING = 20     // px between dot centres
-const RADIUS  = 130    // px — hover influence radius
+const RADIUS  = 130    // px -hover influence radius
 const BASE_A  = 0.13   // resting dot opacity
 const PEAK_A  = 0.92   // fully-lit dot opacity
 
@@ -19,7 +19,7 @@ export default function InteractiveDotGrid({
   // Optional theme override. Omit it and the component keeps its original look
   // (faint white dots on near-black in dark mode). `dot`/`highlight` are "r,g,b"
   // strings; each dot interpolates from `dot` (resting) to `highlight` (fully
-  // lit near the cursor) — pass only `dot` for a single-colour grid.
+  // lit near the cursor) -pass only `dot` for a single-colour grid.
   colors?: {
     background?: string
     dot?: string
@@ -39,7 +39,7 @@ export default function InteractiveDotGrid({
 
   // ── Theme detection ────────────────────────────────────────────────────────
   // useSyncExternalStore (not useState+effect) so the server/first-client-paint
-  // snapshot always agrees (both `false`) — avoids a hydration mismatch when the
+  // snapshot always agrees (both `false`) -avoids a hydration mismatch when the
   // theme-init script has already applied `dark` to <html> before this mounts.
   const subscribeDark = useCallback((onChange: () => void) => {
     const card = containerRef.current?.closest('[data-card-theme]')
@@ -59,14 +59,14 @@ export default function InteractiveDotGrid({
   // ── Pointer tracking ───────────────────────────────────────────────────────
   // Listens at the window level so the cursor is tracked even when the
   // dot grid is rendered behind other elements (e.g. as a background under
-  // a `pointer-events: none` wrapper). Only writes to a ref — no React
+  // a `pointer-events: none` wrapper). Only writes to a ref -no React
   // state, no re-renders. Listeners are passive so the browser never
   // blocks scroll/touch on this handler.
   useEffect(() => {
     const updateFromClient = (clientX: number, clientY: number) => {
       const canvas = canvasRef.current
       if (!canvas) return
-      // getBoundingClientRect is fast on a stable layout — modern browsers
+      // getBoundingClientRect is fast on a stable layout -modern browsers
       // serve it from the cached layout box without triggering reflow.
       const rect = canvas.getBoundingClientRect()
       mouseRef.current = { x: clientX - rect.left, y: clientY - rect.top }
@@ -153,7 +153,7 @@ export default function InteractiveDotGrid({
         const dist2 = dx * dx + dy * dy
         const tgt   = dist2 < r2 ? Math.pow(1 - Math.sqrt(dist2) / RADIUS, 1.5) : 0
 
-        // Fast attack, slow release — feels organic
+        // Fast attack, slow release -feels organic
         d.b += (tgt > d.b ? 0.16 : 0.07) * (tgt - d.b)
         if (d.b < 0.004) d.b = 0
 

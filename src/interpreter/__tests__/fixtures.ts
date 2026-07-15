@@ -87,3 +87,27 @@ export function biasBackwardsReference(grad: number[], batchSize: number, size: 
   }
   return out;
 }
+
+// --- CUDA fixtures ---
+
+export const VECTOR_ADD = `
+__global__ void vector_add(float *a, float *b, float *c, int n) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) {
+    c[idx] = a[idx] + b[idx];
+  }
+}
+`;
+
+/** Every thread stages its own element into shared memory, syncs, then reads back its
+ * mirror-image neighbor's staged value -only correct if the barrier genuinely holds every
+ * thread until all writes to `tile` have landed. */
+export const REVERSE_BLOCK = `
+__global__ void reverse_block(float *data) {
+  __shared__ float tile[8];
+  int tid = threadIdx.x;
+  tile[tid] = data[tid];
+  __syncthreads();
+  data[tid] = tile[blockDim.x - 1 - tid];
+}
+`;

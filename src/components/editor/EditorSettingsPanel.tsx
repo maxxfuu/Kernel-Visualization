@@ -14,9 +14,11 @@ export function EditorSettingsPanel() {
   const themeName = useEditorSettingsStore((s) => s.themeName);
   const tabSize = useEditorSettingsStore((s) => s.tabSize);
   const vimMode = useEditorSettingsStore((s) => s.vimMode);
+  const relativeLineNumbers = useEditorSettingsStore((s) => s.relativeLineNumbers);
   const setThemeName = useEditorSettingsStore((s) => s.setThemeName);
   const setTabSize = useEditorSettingsStore((s) => s.setTabSize);
   const setVimMode = useEditorSettingsStore((s) => s.setVimMode);
+  const setRelativeLineNumbers = useEditorSettingsStore((s) => s.setRelativeLineNumbers);
 
   return (
     <Popover>
@@ -69,6 +71,17 @@ export function EditorSettingsPanel() {
                   Vim keybindings
                 </Label>
                 <Switch id="vim-mode-switch" checked={vimMode} onCheckedChange={setVimMode} />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="relative-line-numbers-switch" className="text-sm">
+                  Relative line numbers
+                </Label>
+                <Switch
+                  id="relative-line-numbers-switch"
+                  checked={relativeLineNumbers}
+                  onCheckedChange={setRelativeLineNumbers}
+                />
               </div>
             </div>
           </div>

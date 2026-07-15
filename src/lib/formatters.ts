@@ -6,6 +6,28 @@ export function formatCellValue(value: number): string {
   return value.toFixed(2);
 }
 
+// int and float are both 4 bytes in this interpreter's value model (no 8/16/64-bit types), so
+// every in-bounds mem-read/mem-write moves exactly one 4-byte element.
+const BYTES_PER_ELEMENT = 4;
+
+/** Total bytes moved (read + write) across a slice of the step trace. Out-of-bounds accesses
+ * never touch real memory, so they don't count. */
+export function computeBytesMoved(steps: StepEvent[]): number {
+  let bytes = 0;
+  for (const step of steps) {
+    if ((step.kind === "mem-read" || step.kind === "mem-write") && step.inBounds) {
+      bytes += BYTES_PER_ELEMENT;
+    }
+  }
+  return bytes;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function describeStep(step: StepEvent | undefined): string {
   if (!step) return "";
   switch (step.kind) {

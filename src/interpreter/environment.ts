@@ -13,12 +13,30 @@ export interface ScalarValue {
   value: number;
 }
 
-export type Value = BufferValue | ScalarValue;
+/** threadIdx / blockIdx / blockDim / gridDim -v1 only ever varies .x; .y/.z are always 0/1. */
+export interface Dim3Value {
+  kind: "dim3";
+  x: number;
+  y: number;
+  z: number;
+}
+
+export type Value = BufferValue | ScalarValue | Dim3Value;
 
 export function makeBuffer(name: string, type: PointerType, values: number[]): BufferValue {
   const elementType: ScalarType = type === "float*" ? "float" : "int";
   const data = elementType === "float" ? new Float32Array(values) : new Int32Array(values);
   return { kind: "buffer", name, elementType, data };
+}
+
+/** Backing storage for a local array declaration (`__shared__` or plain thread-local). */
+export function makeLocalArray(name: string, elementType: ScalarType, size: number): BufferValue {
+  const data = elementType === "float" ? new Float32Array(size) : new Int32Array(size);
+  return { kind: "buffer", name, elementType, data };
+}
+
+export function makeDim3(x: number, y = 0, z = 0): Dim3Value {
+  return { kind: "dim3", x, y, z };
 }
 
 /** Scope-chained environment. A fresh Scope is pushed per function frame, block, and loop iteration. */

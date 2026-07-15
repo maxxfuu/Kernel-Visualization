@@ -16,10 +16,10 @@ export function HeroPreview() {
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background to-transparent sm:h-36" />
       </div>
 
-      <div className="mt-6 flex items-center justify-center gap-2">
+      <div className="mt-10 flex items-center justify-center gap-2">
         <Button>
           <GithubIcon data-icon="inline-start" className="size-4" />
-          Continue with GitHub
+          View on GitHub
         </Button>
         <Button
           variant="outline"

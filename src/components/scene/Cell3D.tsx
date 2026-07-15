@@ -14,7 +14,7 @@ export interface Cell3DProps {
   y: number;
   z: number;
   value: number;
-  magnitudeFraction: number; // 0..1, |value| relative to this buffer's peak — drives idle heatmap color
+  magnitudeFraction: number; // 0..1, |value| relative to this buffer's peak -drives idle heatmap color
   state: CellState;
   intensity: number; // 0..1 highlight strength (1 = just happened, fading as the trail ages)
   label: string; // e.g. "A[3]"
@@ -67,7 +67,7 @@ export function Cell3D({ x, y, z, value, magnitudeFraction, state, intensity, la
     >
       <boxGeometry args={[CELL_SIZE, 0.12, CELL_SIZE]} />
       <meshStandardMaterial color={palette.idleLow} roughness={0.5} metalness={0.05} />
-      <Html center distanceFactor={11} position={[0, 0.15, 0]} style={{ pointerEvents: "none" }}>
+      <Html center distanceFactor={11} position={[0, 0.15, 0]} zIndexRange={[1, 0]} style={{ pointerEvents: "none" }}>
         <div
           className="whitespace-nowrap text-center font-mono text-[11px] font-medium"
           style={{ color: palette.labelText, textShadow: palette.labelShadow }}
@@ -76,7 +76,7 @@ export function Cell3D({ x, y, z, value, magnitudeFraction, state, intensity, la
         </div>
       </Html>
       {hovered && (
-        <Html center distanceFactor={11} position={[0, 0.55, 0]} style={{ pointerEvents: "none" }}>
+        <Html center distanceFactor={11} position={[0, 0.55, 0]} zIndexRange={[1, 0]} style={{ pointerEvents: "none" }}>
           <div className="whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] text-popover-foreground shadow-md">
             {label} = {value}
           </div>

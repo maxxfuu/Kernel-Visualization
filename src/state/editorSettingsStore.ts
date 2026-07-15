@@ -32,9 +32,11 @@ interface EditorSettingsState {
   themeName: EditorThemeName;
   tabSize: number;
   vimMode: boolean;
+  relativeLineNumbers: boolean;
   setThemeName: (theme: EditorThemeName) => void;
   setTabSize: (size: number) => void;
   setVimMode: (enabled: boolean) => void;
+  setRelativeLineNumbers: (enabled: boolean) => void;
 }
 
 export const useEditorSettingsStore = create<EditorSettingsState>()(
@@ -43,9 +45,11 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       themeName: "auto",
       tabSize: 2,
       vimMode: false,
+      relativeLineNumbers: false,
       setThemeName: (themeName) => set({ themeName }),
       setTabSize: (tabSize) => set({ tabSize }),
       setVimMode: (vimMode) => set({ vimMode }),
+      setRelativeLineNumbers: (relativeLineNumbers) => set({ relativeLineNumbers }),
     }),
     { name: "kernel-viz-editor-settings" },
   ),

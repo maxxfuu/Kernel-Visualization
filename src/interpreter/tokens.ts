@@ -56,6 +56,13 @@ export enum TokenType {
   RBracket = "RBracket",
   Semi = "Semi",
   Comma = "Comma",
+  Dot = "Dot",
+
+  // CUDA extensions
+  KernelQualifier = "KernelQualifier", // __global__
+  DeviceQualifier = "DeviceQualifier", // __device__
+  HostQualifier = "HostQualifier", // __host__
+  Shared = "Shared", // __shared__
 
   EOF = "EOF",
 }
@@ -71,6 +78,10 @@ export const KEYWORDS: Record<string, TokenType> = {
   return: TokenType.Return,
   break: TokenType.Break,
   continue: TokenType.Continue,
+  __global__: TokenType.KernelQualifier,
+  __device__: TokenType.DeviceQualifier,
+  __host__: TokenType.HostQualifier,
+  __shared__: TokenType.Shared,
 };
 
 export interface Token {

@@ -10,6 +10,7 @@ import {
   FunctionDecl,
   Identifier,
   IndexExpr,
+  KernelQualifier,
   Literal,
   ParamDecl,
   Program,
@@ -137,8 +138,25 @@ class Parser {
     this.fail(`Expected a type ('void', 'int', or 'float') but found '${this.peek().value}'`);
   }
 
+  private parseKernelQualifier(): KernelQualifier {
+    if (this.at(TokenType.KernelQualifier)) {
+      this.advance();
+      return "global";
+    }
+    if (this.at(TokenType.DeviceQualifier)) {
+      this.advance();
+      return "device";
+    }
+    if (this.at(TokenType.HostQualifier)) {
+      this.advance();
+      return "host";
+    }
+    return null;
+  }
+
   private parseFunctionDecl(): FunctionDecl {
     const start = this.peek();
+    const qualifier = this.parseKernelQualifier();
     const returnType = this.parseTypeKeyword();
     const nameTok = this.expect(TokenType.Identifier, "a function name");
     this.expect(TokenType.LParen, "'(' after function name");
@@ -159,6 +177,7 @@ class Parser {
       loc: this.loc(start, end),
       name: nameTok.value,
       returnType,
+      qualifier,
       params,
       body,
     };
@@ -200,7 +219,7 @@ class Parser {
 
   private parseStmt(): Stmt {
     if (this.at(TokenType.LBrace)) return this.parseBlockStmt();
-    if (this.isTypeKeyword()) return this.parseVarDeclStmt();
+    if (this.isTypeKeyword() || this.at(TokenType.Shared)) return this.parseVarDeclStmt();
     if (this.at(TokenType.If)) return this.parseIfStmt();
     if (this.at(TokenType.For)) return this.parseForStmt();
     if (this.at(TokenType.While)) return this.parseWhileStmt();
@@ -220,15 +239,32 @@ class Parser {
 
   private parseVarDeclStmt(): VarDeclStmt {
     const start = this.peek();
+    let shared = false;
+    if (this.at(TokenType.Shared)) {
+      this.advance();
+      shared = true;
+    }
     const varType = this.parseTypeKeyword() as "int" | "float";
     const nameTok = this.expect(TokenType.Identifier, "a variable name");
+
+    let arraySize: number | null = null;
+    if (this.at(TokenType.LBracket)) {
+      this.advance();
+      const sizeTok = this.expect(TokenType.IntLiteral, "an array size (integer literal)");
+      arraySize = parseInt(sizeTok.value, 10);
+      this.expect(TokenType.RBracket, "']' after array size");
+    } else if (shared) {
+      this.fail("'__shared__' declarations must be arrays, e.g. '__shared__ float tile[256];'");
+    }
+
     let init: Expr | null = null;
     if (this.at(TokenType.Assign)) {
+      if (arraySize !== null) this.fail("array declarations can't have an initializer");
       this.advance();
       init = this.parseExpr();
     }
     const end = this.expect(TokenType.Semi, "';' after variable declaration");
-    return { type: "VarDeclStmt", id: this.nextId(), loc: this.loc(start, end), varType, name: nameTok.value, init };
+    return { type: "VarDeclStmt", id: this.nextId(), loc: this.loc(start, end), varType, name: nameTok.value, init, arraySize, shared };
   }
 
   private parseExprStmt(): import("./ast").ExprStmt {
@@ -406,6 +442,24 @@ class Parser {
         expr = { type: "IndexExpr", id: this.nextId(), loc: this.loc(start, end), object: expr as Identifier, index };
         continue;
       }
+      if (this.at(TokenType.Dot)) {
+        this.advance();
+        const propTok = this.expect(TokenType.Identifier, "'x', 'y', or 'z' after '.'");
+        if (propTok.value !== "x" && propTok.value !== "y" && propTok.value !== "z") {
+          this.fail(`'.${propTok.value}' isn't supported -only .x, .y, .z (e.g. 'threadIdx.x')`);
+        }
+        if (expr.type !== "Identifier") {
+          this.fail("Member access is only supported on threadIdx/blockIdx/blockDim/gridDim");
+        }
+        expr = {
+          type: "MemberExpr",
+          id: this.nextId(),
+          loc: this.loc(start, propTok),
+          object: expr as Identifier,
+          property: propTok.value,
+        };
+        continue;
+      }
       if (this.at(TokenType.PlusPlus) || this.at(TokenType.MinusMinus)) {
         if (expr.type !== "Identifier" && expr.type !== "IndexExpr") {
           this.fail("'++'/'--' can only be applied to a variable or array element");
@@ -441,6 +495,19 @@ class Parser {
     }
     if (tok.type === TokenType.Identifier) {
       this.advance();
+      if (this.at(TokenType.LParen)) {
+        this.advance();
+        const args: Expr[] = [];
+        if (!this.at(TokenType.RParen)) {
+          args.push(this.parseExpr());
+          while (this.at(TokenType.Comma)) {
+            this.advance();
+            args.push(this.parseExpr());
+          }
+        }
+        const end = this.expect(TokenType.RParen, "')' after call arguments");
+        return { type: "CallExpr", id: this.nextId(), loc: this.loc(tok, end), callee: tok.value, args };
+      }
       const ident: Identifier = { type: "Identifier", id: this.nextId(), loc: this.loc(tok, tok), name: tok.value };
       return ident;
     }
