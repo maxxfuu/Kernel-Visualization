@@ -9,6 +9,10 @@ export interface ScenePalette {
   // itself reads as a heatmap of the matrix, independent of the read/write highlight overlay.
   idleLow: Color;
   idleHigh: Color;
+  // Red-shifted twins of idleLow/idleHigh: when a buffer's shape makes the matmul impossible,
+  // its whole heatmap re-renders on this gradient instead, so the error reads at a glance.
+  invalidIdleLow: Color;
+  invalidIdleHigh: Color;
   read: Color;
   write: Color;
   error: Color;
@@ -24,6 +28,8 @@ export const DARK_PALETTE: ScenePalette = {
   gridMinor: "#161616",
   idleLow: new Color("#252b3a"),
   idleHigh: new Color("#5b7ab8"),
+  invalidIdleLow: new Color("#3a2525"),
+  invalidIdleHigh: new Color("#b85b5b"),
   read: new Color("#3b82f6"),
   write: new Color("#f59e0b"),
   error: new Color("#ef4444"),
@@ -39,6 +45,8 @@ export const LIGHT_PALETTE: ScenePalette = {
   gridMinor: "#e4e4e7",
   idleLow: new Color("#e2e8f0"),
   idleHigh: new Color("#2563eb"),
+  invalidIdleLow: new Color("#f0e2e2"),
+  invalidIdleHigh: new Color("#dc2626"),
   read: new Color("#2563eb"),
   write: new Color("#d97706"),
   error: new Color("#dc2626"),

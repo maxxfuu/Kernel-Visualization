@@ -12,11 +12,13 @@ export interface BufferMatrix3DProps {
   name: string;
   xOffset: number;
   shape: Shape;
+  /** Current shape makes the matmul impossible -render the whole heatmap on the red gradient. */
+  invalid?: boolean;
 }
 
 const BASE_Y = 0.06;
 
-export function BufferMatrix3D({ name, xOffset, shape }: BufferMatrix3DProps) {
+export function BufferMatrix3D({ name, xOffset, shape, invalid }: BufferMatrix3DProps) {
   const palette = useScenePalette();
   const { values, activeAccesses, recentAccesses, errorIndex } = useMemoryVisualState(name);
   const positions = useCellPositions();
@@ -63,6 +65,7 @@ export function BufferMatrix3D({ name, xOffset, shape }: BufferMatrix3DProps) {
         magnitudeFraction={Math.abs(value) / peakMagnitude}
         state={state}
         intensity={intensity}
+        invalid={invalid}
         label={`${name}[${index}]`}
         onRegisterPosition={(pos) => positions.set(cellKey(name, index), pos)}
       />,
@@ -72,7 +75,10 @@ export function BufferMatrix3D({ name, xOffset, shape }: BufferMatrix3DProps) {
   return (
     <group>
       <Html position={[xOffset, labelY, labelZ]} center distanceFactor={12} zIndexRange={[1, 0]} style={{ pointerEvents: "none" }}>
-        <div className="whitespace-nowrap text-center text-xs font-medium" style={{ color: palette.labelText }}>
+        <div
+          className="whitespace-nowrap text-center text-xs font-medium"
+          style={{ color: invalid ? palette.error.getStyle() : palette.labelText }}
+        >
           <span className="font-mono">{name}</span>
           <span className="ml-1.5" style={{ color: palette.labelSubtext }}>
             {layers > 1 ? `${layers}×${displayRows}×${displayCols}` : `${displayRows}×${displayCols}`}

@@ -1,39 +1,30 @@
-import { displayDims, Shape } from "./shape";
+import { Shape } from "./shape";
 
 /** Scoped heuristic: only apply matmul shape validation to functions that look like a matmul kernel. */
 export function isMatmulLikeFunction(name: string | null): boolean {
   return !!name && /matmul/i.test(name);
 }
 
-export function canMatmul(left: Shape, right: Shape): boolean {
-  const leftDims = displayDims(left);
-  const rightDims = displayDims(right);
-  return leftDims.cols === rightDims.rows;
+export interface MatmulDims {
+  m: number;
+  n: number;
+  k: number;
 }
 
-export interface MatmulStatus {
-  applicable: boolean; // this is a matmul-like kernel with (at least) two operand buffers
-  valid: boolean; // current (A, B) shapes, given their transpose flags, are matmul-compatible
-  leftTransposeEnabled: boolean; // flipping A's transpose alone would change validity in a useful way
-  rightTransposeEnabled: boolean; // flipping B's transpose alone would change validity in a useful way
-}
+type Dims = Pick<Shape, "rows" | "cols">;
 
 /**
- * Checks whether the first two operand buffers (by convention, A and B) can be matrix-multiplied
- * given their current display shapes, and whether transposing either one (alone) would fix an
- * otherwise-invalid combination. Only meaningful for matmul-like kernels -see isMatmulLikeFunction.
+ * Derives the m/n/k scalars implied by the operand/output buffer shapes, or null when the
+ * shapes are inconsistent (the matmul is impossible).
+ *
+ * Convention (matching the default matmul_at_b kernel's indexing -A[l*n+i], B[l*k+j],
+ * C[i*k+j] with l<m, i<n, j<k): A is physically m×n, B is m×k, C is n×k. So the shapes are
+ * consistent exactly when A/B share their row count (m), A's cols match C's rows (n), and
+ * B's cols match C's cols (k). Physical dims only -the transpose flag is a pure display
+ * relabeling and never changes what the kernel computes.
  */
-export function computeMatmulStatus(functionName: string | null, left: Shape | null, right: Shape | null): MatmulStatus {
-  if (!isMatmulLikeFunction(functionName) || !left || !right) {
-    return { applicable: false, valid: true, leftTransposeEnabled: false, rightTransposeEnabled: false };
-  }
-  const valid = canMatmul(left, right);
-  const leftFlipped = { ...left, transposed: !left.transposed };
-  const rightFlipped = { ...right, transposed: !right.transposed };
-  return {
-    applicable: true,
-    valid,
-    leftTransposeEnabled: canMatmul(leftFlipped, right),
-    rightTransposeEnabled: canMatmul(left, rightFlipped),
-  };
+export function matmulDimsFromShapes(a: Dims, b: Dims, c: Dims | null): MatmulDims | null {
+  if (a.rows !== b.rows) return null;
+  if (c && (a.cols !== c.rows || b.cols !== c.cols)) return null;
+  return { m: a.rows, n: a.cols, k: b.cols };
 }

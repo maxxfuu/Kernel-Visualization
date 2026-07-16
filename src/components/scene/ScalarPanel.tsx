@@ -4,47 +4,54 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { computeConfigSignature, useKernelVizStore } from "@/state/store";
+import { useKernelVizStore } from "@/state/store";
+import { isMatmulLikeFunction } from "./matmulValidation";
 
 const CONFIG_ERROR_TOAST_ID = "config-error";
 
-export function ScalarPanel() {
+export function ScalarPanel({ matmulInvalid = false }: { matmulInvalid?: boolean }) {
   const functionSignatures = useKernelVizStore((s) => s.functionSignatures);
   const selectedFunctionName = useKernelVizStore((s) => s.selectedFunctionName);
   const scalarConfigs = useKernelVizStore((s) => s.scalarConfigs);
-  const bufferConfigs = useKernelVizStore((s) => s.bufferConfigs);
   const launchConfig = useKernelVizStore((s) => s.launchConfig);
   const updateScalarConfig = useKernelVizStore((s) => s.updateScalarConfig);
+  const setMatmulDims = useKernelVizStore((s) => s.setMatmulDims);
   const updateLaunchConfig = useKernelVizStore((s) => s.updateLaunchConfig);
   const startRun = useKernelVizStore((s) => s.startRun);
   const play = useKernelVizStore((s) => s.play);
-  const steps = useKernelVizStore((s) => s.steps);
   const status = useKernelVizStore((s) => s.status);
-  const lastRunSignature = useKernelVizStore((s) => s.lastRunSignature);
 
   const sig = functionSignatures.find((s) => s.name === selectedFunctionName);
   const scalarParams = sig?.params.filter((p) => p.type === "int" || p.type === "float") ?? [];
   if (scalarParams.length === 0 && !sig?.isKernel) return null;
 
-  const canProceed = status !== "parse-error" && status !== "no-source";
-  const currentSignature = computeConfigSignature(bufferConfigs, scalarConfigs, launchConfig);
-  const isInitialized = steps.length > 0 && currentSignature === lastRunSignature;
+  const isMatmul = isMatmulLikeFunction(selectedFunctionName);
+  // While the matrix shapes are inconsistent, running would execute against the last valid
+  // m/n/k -not what's on screen- so Run is held until the red state is resolved.
+  const canRun = status !== "parse-error" && status !== "no-source" && !matmulInvalid;
 
-  function handleClick() {
-    if (isInitialized) {
-      play();
-      return;
+  function handleScalarChange(name: string, value: number) {
+    // The matmul dims flow through setMatmulDims so the A/B/C shapes AND buffer sizes follow
+    // the scalars (two-way binding with the shape controls). Other scalars stay free-form.
+    if (isMatmul && (name === "m" || name === "n" || name === "k")) {
+      setMatmulDims({ [name]: value });
+    } else {
+      updateScalarConfig(name, value);
     }
+  }
+
+  function handleRun() {
     startRun();
     const freshErrors = useKernelVizStore.getState().configErrors;
     if (freshErrors.length > 0) {
-      toast.error("Can't initialize with these values", {
+      toast.error("Can't run with these values", {
         id: CONFIG_ERROR_TOAST_ID,
         description: freshErrors.map((e) => e.message).join(" "),
       });
-    } else {
-      toast.dismiss(CONFIG_ERROR_TOAST_ID);
+      return;
     }
+    toast.dismiss(CONFIG_ERROR_TOAST_ID);
+    play();
   }
 
   return (
@@ -57,7 +64,7 @@ export function ScalarPanel() {
             <Input
               type="number"
               value={scalarConfigs[p.name] ?? 0}
-              onChange={(e) => updateScalarConfig(p.name, Number(e.target.value))}
+              onChange={(e) => handleScalarChange(p.name, Number(e.target.value))}
               className="h-8 w-14"
             />
           </div>
@@ -86,8 +93,13 @@ export function ScalarPanel() {
             </div>
           </>
         )}
-        <Button size="sm" disabled={!canProceed} onClick={handleClick}>
-          {isInitialized ? "Run" : "Initialize"}
+        <Button
+          size="sm"
+          disabled={!canRun}
+          onClick={handleRun}
+          title={matmulInvalid ? "Fix the matrix shapes first -they can't be matrix-multiplied." : undefined}
+        >
+          Run
         </Button>
       </div>
     </div>

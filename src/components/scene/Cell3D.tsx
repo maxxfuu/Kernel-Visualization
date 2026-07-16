@@ -18,10 +18,13 @@ export interface Cell3DProps {
   state: CellState;
   intensity: number; // 0..1 highlight strength (1 = just happened, fading as the trail ages)
   label: string; // e.g. "A[3]"
+  // The whole buffer is in an error state (e.g. its shape makes the matmul impossible), so the
+  // idle heatmap renders on the red gradient instead of the blue one.
+  invalid?: boolean;
   onRegisterPosition?: (pos: [number, number, number]) => void;
 }
 
-export function Cell3D({ x, y, z, value, magnitudeFraction, state, intensity, label, onRegisterPosition }: Cell3DProps) {
+export function Cell3D({ x, y, z, value, magnitudeFraction, state, intensity, label, invalid, onRegisterPosition }: Cell3DProps) {
   const palette = useScenePalette();
   const meshRef = useRef<Mesh>(null);
   const currentColor = useRef(palette.idleLow.clone());
@@ -33,7 +36,9 @@ export function Cell3D({ x, y, z, value, magnitudeFraction, state, intensity, la
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [x, y, z]);
 
-  const idleColor = new Color().copy(palette.idleLow).lerp(palette.idleHigh, magnitudeFraction);
+  const idleColor = invalid
+    ? new Color().copy(palette.invalidIdleLow).lerp(palette.invalidIdleHigh, magnitudeFraction)
+    : new Color().copy(palette.idleLow).lerp(palette.idleHigh, magnitudeFraction);
   const targetHue = state === "error" ? palette.error : state === "read" ? palette.read : state === "write" ? palette.write : idleColor;
   const targetScale = state === "idle" ? 1 : 1 + intensity * 0.22;
 

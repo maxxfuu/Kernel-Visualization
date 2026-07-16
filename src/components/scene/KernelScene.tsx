@@ -12,7 +12,7 @@ import { BufferMatrix3D } from "./BufferMatrix3D";
 import { OperationBeams } from "./OperationBeams";
 import { CELL_SPACING, DARK_PALETTE, LIGHT_PALETTE } from "./colors";
 import { autoShape, displayDims, Shape, ShapeMode } from "./shape";
-import { computeMatmulStatus } from "./matmulValidation";
+import { isMatmulLikeFunction, matmulDimsFromShapes } from "./matmulValidation";
 import { ScalarPanel } from "./ScalarPanel";
 import { ThreadLanesPanel } from "./ThreadLanesPanel";
 import { Input } from "@/components/ui/input";
@@ -24,20 +24,23 @@ const MATMUL_TOAST_ID = "matmul-shape-invalid";
 function ShapeControl({
   name,
   shape,
-  transposeEnabled,
-  dimsLocked,
-  lockedHint,
+  lengthLocked,
+  invalid,
   onChange,
 }: {
   name: string;
   shape: Shape;
-  transposeEnabled: boolean;
-  dimsLocked: boolean;
-  lockedHint?: string;
+  /** 1D view of a matmul buffer: its length IS m·n (etc.), so it can't be edited directly. */
+  lengthLocked: boolean;
+  invalid: boolean;
   onChange: (next: Shape) => void;
 }) {
   return (
-    <div className="pointer-events-auto flex w-full flex-col gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-md backdrop-blur-sm">
+    <div
+      className={`pointer-events-auto flex w-full flex-col gap-2 rounded-lg border bg-card px-3 py-2 text-sm text-foreground shadow-md backdrop-blur-sm ${
+        invalid ? "border-destructive" : "border-border"
+      }`}
+    >
       <div className="flex flex-wrap items-center gap-2.5">
         <span className="font-mono font-semibold">{name}</span>
         <ToggleGroup
@@ -49,17 +52,11 @@ function ShapeControl({
             const length = shape.layers * shape.rows * shape.cols;
             onChange(autoShape(length, mode));
           }}
-          disabled={dimsLocked}
         >
           <ToggleGroupItem value="1d">1D</ToggleGroupItem>
           <ToggleGroupItem value="2d">2D</ToggleGroupItem>
           <ToggleGroupItem value="3d">3D</ToggleGroupItem>
         </ToggleGroup>
-        {dimsLocked && (
-          <span className="text-xs text-muted-foreground" title={lockedHint}>
-            (derived)
-          </span>
-        )}
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
         {shape.mode === "3d" && (
@@ -68,7 +65,6 @@ function ShapeControl({
               type="number"
               min={1}
               value={shape.layers}
-              disabled={dimsLocked}
               onChange={(e) => onChange({ ...shape, layers: Math.max(1, Number(e.target.value) || 1) })}
               className="h-8 w-14"
               title="layers"
@@ -82,7 +78,6 @@ function ShapeControl({
               type="number"
               min={1}
               value={shape.rows}
-              disabled={dimsLocked}
               onChange={(e) => onChange({ ...shape, rows: Math.max(1, Number(e.target.value) || 1) })}
               className="h-8 w-14"
               title="rows"
@@ -94,19 +89,18 @@ function ShapeControl({
           type="number"
           min={1}
           value={shape.cols}
-          disabled={dimsLocked}
+          disabled={lengthLocked}
           onChange={(e) => onChange({ ...shape, cols: Math.max(1, Number(e.target.value) || 1) })}
           className="h-8 w-14"
-          title={shape.mode === "1d" ? "length" : "cols"}
+          title={lengthLocked ? "length is derived from the matrix dims (set via 2D mode or m/n/k)" : shape.mode === "1d" ? "length" : "cols"}
         />
         {shape.mode !== "1d" && (
           <Toggle
             size="sm"
             variant="outline"
             pressed={shape.transposed}
-            disabled={!transposeEnabled}
             onPressedChange={(transposed) => onChange({ ...shape, transposed })}
-            title={transposeEnabled ? "Transpose this matrix" : "Transposing this wouldn't make the matmul valid"}
+            title="Transpose this matrix (display only -never rewrites the buffer)"
           >
             Transpose
           </Toggle>
@@ -123,7 +117,8 @@ export function KernelScene() {
   const selectedFunctionName = useKernelVizStore((s) => s.selectedFunctionName);
   const bufferConfigs = useKernelVizStore((s) => s.bufferConfigs);
   const scalarConfigs = useKernelVizStore((s) => s.scalarConfigs);
-  const steps = useKernelVizStore((s) => s.steps);
+  const setMatmulDims = useKernelVizStore((s) => s.setMatmulDims);
+  const resetRun = useKernelVizStore((s) => s.resetRun);
 
   const sig = functionSignatures.find((s) => s.name === selectedFunctionName);
   const bufferParams = useMemo(() => sig?.params.filter((p) => p.type === "int*" || p.type === "float*") ?? [], [sig]);
@@ -132,90 +127,136 @@ export function KernelScene() {
   // (block-scoped shared memory doesn't participate in that concept).
   const sharedArrays = useMemo(() => sig?.sharedArrays ?? [], [sig]);
 
-  // Only explicit user overrides live in state; buffers without one fall back to an
-  // auto-computed square-ish 2D shape at render time (see `effectiveShape` below).
+  // Free-form shape overrides for non-matmul buffers; matmul buffer shapes never live here -
+  // they always derive from the m/n/k scalars (see derivedMatmulShape below).
   const [shapeOverrides, setShapeOverrides] = useState<Record<string, Shape>>({});
 
-  const leftOperand = bufferParams[0];
-  const rightOperand = bufferParams[1];
+  // By convention (matching matmul_at_b), the first three pointer params are the matmul's
+  // A (m×n), B (m×k), and C (n×k), and its scalar dims are named m, n, k -see
+  // matmulValidation.ts. Scoped to matmul-like function names so this never fires for
+  // unrelated kernels like relu_backward.
+  const m = scalarConfigs.m;
+  const n = scalarConfigs.n;
+  const k = scalarConfigs.k;
+  const matmulApplicable =
+    isMatmulLikeFunction(selectedFunctionName) &&
+    bufferParams.length >= 2 &&
+    m !== undefined &&
+    n !== undefined &&
+    k !== undefined;
 
-  // By convention (and per the matmul_at_b / matmul_a_bt examples), the first two pointer
-  // params are the matmul operands, and their scalar dimensions are named m, n, k, matching
-  // the signature (A, B, C, m, n, k). Scoped to matmul-like function names (see
-  // isMatmulLikeFunction) so it never fires for unrelated kernels like relu_backward.
-  //
-  // Once a run exists, the displayed shape for A/B MUST reflect the real m/n/k actually used
-  // by that run -otherwise "stepping through" shows a computation that doesn't match what's
-  // on screen. Before a run, shapes are free-form for pedagogical "would this multiply?"
-  // exploration (see the toast/transpose-to-fix flow below).
-  const hasRunDerivedDims =
-    steps.length > 0 &&
-    scalarConfigs.m !== undefined &&
-    scalarConfigs.n !== undefined &&
-    scalarConfigs.k !== undefined;
+  // Matmul shapes are two-way bound to m/n/k: a rows/cols edit that stays consistent is
+  // immediately folded back into the scalars (and buffer sizes), while an INCONSISTENT edit is
+  // held here as a draft -displayed (in red) but never written to the scalars- until either a
+  // follow-up edit or an m/n/k change resolves it.
+  const [dimDrafts, setDimDrafts] = useState<Record<string, { rows: number; cols: number }>>({});
+  // Display-only transpose flags (never affect validity or what the kernel computes).
+  const [transposeFlags, setTransposeFlags] = useState<Record<string, boolean>>({});
+  // Display-only re-folds of the same flat buffer: "2d" is the kernel's own m/n/k fold (the
+  // one that's synced and validated), "1d" unrolls it into physical memory order, and "3d" is
+  // a free fold whose dims live in foldOverrides. None of these touch the data or the scalars.
+  const [displayModes, setDisplayModes] = useState<Record<string, ShapeMode>>({});
+  const [foldOverrides, setFoldOverrides] = useState<Record<string, { layers: number; rows: number; cols: number }>>({});
 
-  function runDerivedShape(kind: "left" | "right", prevTransposed: boolean): Shape {
-    const m = scalarConfigs.m;
-    const n = scalarConfigs.n;
-    const k = scalarConfigs.k;
-    // A is physically m rows x n cols (matmul_at_b: A[l*n+i]); shown transposed by default so
-    // it reads as "row i of A used in the product" (matching A^T, the operand the kernel
-    // actually implements) instead of the raw physical (untransposed) storage.
-    if (kind === "left") return { mode: "2d", layers: 1, rows: m, cols: n, transposed: prevTransposed };
-    // B is physically m rows x k cols (matmul_at_b: B[l*k+j]), used directly, untransposed.
-    return { mode: "2d", layers: 1, rows: m, cols: k, transposed: prevTransposed };
+  // Whenever the scalars move (panel edit, or a valid shape edit landing), any pending drafts
+  // are stale: the freshly derived shapes are the truth again. Reset-during-render (rather
+  // than an effect) so the stale drafts never paint.
+  const scalarKey = `${selectedFunctionName}:${m}:${n}:${k}`;
+  const [prevScalarKey, setPrevScalarKey] = useState(scalarKey);
+  if (scalarKey !== prevScalarKey) {
+    setPrevScalarKey(scalarKey);
+    setDimDrafts({});
+    // Custom 3D folds were sized for the old cell count -fall back to the auto fold.
+    setFoldOverrides({});
   }
 
-  function effectiveShape(name: string): Shape {
-    const prev = shapeOverrides[name];
-    if (hasRunDerivedDims && leftOperand && name === leftOperand.name) {
-      return runDerivedShape("left", prev?.transposed ?? true);
-    }
-    if (hasRunDerivedDims && rightOperand && name === rightOperand.name) {
-      return runDerivedShape("right", prev?.transposed ?? false);
-    }
-    return prev ?? autoShape(bufferConfigs[name]?.size ?? 0);
+  function derivedMatmulShape(index: number, name: string): Shape {
+    // Only called when matmulApplicable, i.e. m/n/k are all defined -the ?? 1 just narrows the type.
+    const [mm, nn, kk] = [m ?? 1, n ?? 1, k ?? 1];
+    const dims = index === 0 ? { rows: mm, cols: nn } : index === 1 ? { rows: mm, cols: kk } : { rows: nn, cols: kk };
+    const draft = dimDrafts[name];
+    // A is shown transposed by default so it reads as A^T -the operand the kernel actually
+    // multiplies with (matmul_at_b indexes A[l*n+i])- rather than its raw physical storage.
+    const transposed = transposeFlags[name] ?? index === 0;
+    return { mode: "2d", layers: 1, rows: draft?.rows ?? dims.rows, cols: draft?.cols ?? dims.cols, transposed };
   }
 
-  const leftShape = leftOperand ? effectiveShape(leftOperand.name) : null;
-  const rightShape = rightOperand ? effectiveShape(rightOperand.name) : null;
-  const matmulStatus = computeMatmulStatus(selectedFunctionName, leftShape, rightShape);
-
-  // The output (and any further) buffer's shape is never independently chosen -it's always
-  // C = A @ B's shape: rows from the left operand, cols from the right operand.
-  const derivedOutputDims =
-    matmulStatus.applicable && leftShape && rightShape
-      ? { rows: displayDims(leftShape).rows, cols: displayDims(rightShape).cols }
-      : null;
-
-  function outputShape(name: string): Shape {
-    if (derivedOutputDims) {
-      return { mode: "2d", layers: 1, rows: derivedOutputDims.rows, cols: derivedOutputDims.cols, transposed: false };
-    }
-    return shapeOverrides[name] ?? autoShape(bufferConfigs[name]?.size ?? 0);
+  /** The canonical 2D shape re-folded for display, per the buffer's chosen view mode. */
+  function displayedMatmulShape(index: number, name: string): Shape {
+    const canonical = derivedMatmulShape(index, name);
+    const mode = displayModes[name] ?? "2d";
+    if (mode === "2d") return canonical;
+    const cellCount = canonical.rows * canonical.cols;
+    if (mode === "1d") return { mode: "1d", layers: 1, rows: 1, cols: cellCount, transposed: false };
+    const fold = foldOverrides[name] ?? autoShape(cellCount, "3d");
+    return { mode: "3d", layers: fold.layers, rows: fold.rows, cols: fold.cols, transposed: canonical.transposed };
   }
 
-  function shapeForIndex(index: number, name: string): Shape {
-    if (matmulStatus.applicable && index >= 2) return outputShape(name);
-    return effectiveShape(name);
+  const matmulBufferCount = matmulApplicable ? Math.min(bufferParams.length, 3) : 0;
+  // Validity (and the m/n/k sync) always works on the canonical 2D dims, no matter how a
+  // buffer is currently folded for display.
+  const matmulShapes = bufferParams.slice(0, matmulBufferCount).map((p, i) => derivedMatmulShape(i, p.name));
+  const matmulDims =
+    matmulBufferCount >= 2 ? matmulDimsFromShapes(matmulShapes[0], matmulShapes[1], matmulShapes[2] ?? null) : null;
+  const matmulInvalid = matmulBufferCount >= 2 && matmulDims === null;
+
+  function handleMatmulShapeChange(index: number, name: string, next: Shape) {
+    const current = displayedMatmulShape(index, name);
+    // Mode switch = pure re-fold of the same flat buffer. 2D snaps back to the kernel's own
+    // m/n/k fold; 3D starts from the auto fold the toggle just produced.
+    if (next.mode !== current.mode) {
+      setDisplayModes((prev) => ({ ...prev, [name]: next.mode }));
+      if (next.mode === "3d") {
+        setFoldOverrides((prev) => ({ ...prev, [name]: { layers: next.layers, rows: next.rows, cols: next.cols } }));
+      }
+      return;
+    }
+    if (next.transposed !== current.transposed) {
+      setTransposeFlags((prev) => ({ ...prev, [name]: next.transposed }));
+    }
+    if (current.mode === "3d") {
+      // Free re-fold, display-only -never touches m/n/k, sizes, or validity.
+      setFoldOverrides((prev) => ({ ...prev, [name]: { layers: next.layers, rows: next.rows, cols: next.cols } }));
+      return;
+    }
+    if (current.mode !== "2d") return; // 1D length is derived -nothing else to edit
+    if (next.rows === current.rows && next.cols === current.cols) return;
+
+    // Candidate shape set = this edit applied on top of what's currently displayed (which
+    // includes any other buffer's pending draft).
+    const candidate = matmulShapes.map((shape, i) => (i === index ? { rows: next.rows, cols: next.cols } : shape));
+    const dims = matmulDimsFromShapes(candidate[0], candidate[1], candidate[2] ?? null);
+    if (dims) {
+      setDimDrafts({});
+      setMatmulDims(dims); // scalars + buffer sizes follow the shapes
+    } else {
+      setDimDrafts((prev) => ({ ...prev, [name]: { rows: next.rows, cols: next.cols } }));
+      // Same rule as a valid edit (where setMatmulDims discards the stale run): ANY dims edit
+      // invalidates the recording. Otherwise the old run would keep animating over the draft
+      // fold, drawing real accesses at positions the recording was never made for.
+      resetRun();
+    }
   }
 
   // Dependency key covers everything the toast message reads, so it stays in sync even while
-  // `valid` itself doesn't change (e.g. editing B from 4x4 to 2x2 while still invalid).
-  const leftDims = leftShape ? `${leftShape.rows}x${leftShape.cols}x${leftShape.transposed}` : "";
-  const rightDims = rightShape ? `${rightShape.rows}x${rightShape.cols}x${rightShape.transposed}` : "";
+  // `matmulInvalid` itself doesn't change (e.g. editing B from 4x5 to 2x5 while still invalid).
+  const shapesKey = matmulShapes.map((s) => `${s.rows}x${s.cols}`).join("|");
 
   useEffect(() => {
-    if (matmulStatus.applicable && !matmulStatus.valid && leftShape && rightShape) {
+    if (matmulInvalid) {
+      const parts = bufferParams
+        .slice(0, matmulBufferCount)
+        .map((p, i) => `${p.name}(${matmulShapes[i].rows}×${matmulShapes[i].cols})`)
+        .join(", ");
       toast.error("Shapes can't be matrix-multiplied", {
         id: MATMUL_TOAST_ID,
-        description: `${leftOperand?.name}(${leftShape.rows}×${leftShape.cols}) × ${rightOperand?.name}(${rightShape.rows}×${rightShape.cols}) -try transposing one.`,
+        description: `${parts} -needs A: m×n, B: m×k, C: n×k. Fix the dims (or m/n/k) to clear the red.`,
       });
     } else {
       toast.dismiss(MATMUL_TOAST_ID);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matmulStatus.applicable, matmulStatus.valid, leftOperand?.name, rightOperand?.name, leftDims, rightDims]);
+  }, [matmulInvalid, shapesKey]);
 
   if (bufferParams.length === 0) {
     return (
@@ -225,6 +266,11 @@ export function KernelScene() {
     );
   }
 
+  function shapeForIndex(index: number, name: string): Shape {
+    if (index < matmulBufferCount) return displayedMatmulShape(index, name);
+    return shapeOverrides[name] ?? autoShape(bufferConfigs[name]?.size ?? 0);
+  }
+
   // Panels = the device buffers (matmul-aware shape controls) followed by any __shared__
   // arrays (auto-shaped, no transpose/matmul concept) -laid out and rendered as one list.
   const panelNames = [...bufferParams.map((p) => p.name), ...sharedArrays.map((s) => s.name)];
@@ -232,6 +278,9 @@ export function KernelScene() {
     ...bufferParams.map((p, i) => shapeForIndex(i, p.name)),
     ...sharedArrays.map((s) => shapeOverrides[s.name] ?? autoShape(s.size)),
   ];
+  // When the matmul is impossible, every participating matrix goes red -the error is about
+  // the combination, not one buffer.
+  const panelInvalid = panelNames.map((_, i) => matmulInvalid && i < matmulBufferCount);
 
   // Slot width follows each buffer's actual on-screen footprint (display cols * spacing)
   // rather than a fixed width, so switching a buffer to 1D/3D or transposing it doesn't
@@ -252,19 +301,6 @@ export function KernelScene() {
   const center = (xOffsets[0] - widths[0] / 2) + totalSpan / 2;
   const centeredXOffsets = xOffsets.map((x) => x - center);
 
-  function transposeEnabledFor(index: number): boolean {
-    if (!matmulStatus.applicable) return true; // no matmul concept for this kernel -free display transform
-    if (index >= 2) return false; // output shape (and orientation) is fully derived
-    if (index === 0) return hasRunDerivedDims ? true : matmulStatus.leftTransposeEnabled;
-    return hasRunDerivedDims ? true : matmulStatus.rightTransposeEnabled;
-  }
-
-  function dimsLockedFor(index: number): boolean {
-    if (!matmulStatus.applicable) return false;
-    if (index >= 2) return true; // output dims always derived from A/B
-    return hasRunDerivedDims; // operand dims lock once they're driven by a real run's m/n/k
-  }
-
   return (
     // `isolate` pins drei's Html-portaled labels (which get their own dynamically computed
     // z-index for depth-sorting) to this stacking context, so they can never climb above a
@@ -276,17 +312,15 @@ export function KernelScene() {
             key={p.name}
             name={p.name}
             shape={panelShapes[i]}
-            transposeEnabled={transposeEnabledFor(i)}
-            dimsLocked={dimsLockedFor(i)}
-            lockedHint={
-              i >= 2
-                ? "Output shape = (left operand rows) × (right operand cols) -not independently settable."
-                : "Locked to the m/n/k actually used by your last run."
-            }
-            onChange={(next) => setShapeOverrides((prev) => ({ ...prev, [p.name]: next }))}
+            lengthLocked={i < matmulBufferCount && panelShapes[i].mode === "1d"}
+            invalid={panelInvalid[i]}
+            onChange={(next) => {
+              if (i < matmulBufferCount) handleMatmulShapeChange(i, p.name, next);
+              else setShapeOverrides((prev) => ({ ...prev, [p.name]: next }));
+            }}
           />
         ))}
-        <ScalarPanel />
+        <ScalarPanel matmulInvalid={matmulInvalid} />
         <ThreadLanesPanel />
       </div>
       <Canvas camera={{ position: [0, 9, 16], fov: 40 }} dpr={[1, 2]}>
@@ -299,7 +333,7 @@ export function KernelScene() {
         <ScenePaletteProvider palette={palette}>
           <CellPositionsProvider>
             {panelNames.map((name, i) => (
-              <BufferMatrix3D key={name} name={name} xOffset={centeredXOffsets[i]} shape={panelShapes[i]} />
+              <BufferMatrix3D key={name} name={name} xOffset={centeredXOffsets[i]} shape={panelShapes[i]} invalid={panelInvalid[i]} />
             ))}
             <OperationBeams />
           </CellPositionsProvider>

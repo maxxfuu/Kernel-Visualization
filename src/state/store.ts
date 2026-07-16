@@ -15,6 +15,7 @@ import {
   validateConfig,
 } from "@/lib/interpreterClient";
 import { Keyframe, buildKeyframes } from "@/lib/keyframe";
+import { MatmulDims, isMatmulLikeFunction } from "@/components/scene/matmulValidation";
 
 export interface BufferConfigForm {
   size: number;
@@ -53,7 +54,7 @@ export const DEFAULT_CUDA_SOURCE = `__global__ void vector_add(float *a, float *
 }
 `;
 
-function resolveFillValues(cfg: BufferConfigForm): number[] {
+export function resolveFillValues(cfg: BufferConfigForm): number[] {
   switch (cfg.fillStrategy) {
     case "zero":
       return new Array(cfg.size).fill(0);
@@ -267,6 +268,9 @@ interface KernelVizState {
   selectFunction: (name: string) => void;
   updateBufferConfig: (name: string, patch: Partial<BufferConfigForm>) => void;
   updateScalarConfig: (name: string, value: number) => void;
+  /** Sets some/all of the matmul m/n/k scalars AND resizes the operand/output buffers to
+   * match (A: m*n, B: m*k, C: n*k) so shapes, loop ranges, and buffer lengths stay in sync. */
+  setMatmulDims: (dims: Partial<MatmulDims>) => void;
   updateLaunchConfig: (patch: Partial<LaunchConfig>) => void;
   startRun: () => void;
   resetRun: () => void;
@@ -313,6 +317,22 @@ function deriveSignaturesAndConfigs(
   }
   return { functionSignatures: signatures, selectedFunctionName: selected, bufferConfigs, scalarConfigs };
 }
+
+// Any config edit makes an existing run stale -its steps were computed against the old sizes
+// and scalar values. Clearing the run immediately lets the scene fall back to previewing the
+// fresh fill values at the new shape, and the Run button re-executes from the current config.
+const STALE_RUN_RESET: Pick<
+  KernelVizState,
+  "steps" | "runErrors" | "configErrors" | "lastRunSignature" | "currentStepIndex" | "isPlaying" | "status"
+> = {
+  steps: [],
+  runErrors: [],
+  configErrors: [],
+  lastRunSignature: null,
+  currentStepIndex: 0,
+  isPlaying: false,
+  status: "ready",
+};
 
 function initialSetupState() {
   const { program, errors } = parseSource(DEFAULT_SOURCE);
@@ -370,15 +390,38 @@ export const useKernelVizStore = create<KernelVizState>((set, get) => ({
   },
 
   updateBufferConfig: (name, patch) => {
-    set((s) => ({ bufferConfigs: { ...s.bufferConfigs, [name]: { ...s.bufferConfigs[name], ...patch } } }));
+    set((s) => ({ bufferConfigs: { ...s.bufferConfigs, [name]: { ...s.bufferConfigs[name], ...patch } }, ...STALE_RUN_RESET }));
   },
 
   updateScalarConfig: (name, value) => {
-    set((s) => ({ scalarConfigs: { ...s.scalarConfigs, [name]: value } }));
+    set((s) => ({ scalarConfigs: { ...s.scalarConfigs, [name]: value }, ...STALE_RUN_RESET }));
+  },
+
+  setMatmulDims: (dims) => {
+    set((s) => {
+      const sig = s.functionSignatures.find((f) => f.name === s.selectedFunctionName);
+      if (!sig || !isMatmulLikeFunction(sig.name)) return {};
+      const clamp = (v: number | undefined, fallback: number) =>
+        Number.isFinite(v) ? Math.max(1, Math.floor(v as number)) : fallback;
+      const m = clamp(dims.m, s.scalarConfigs.m ?? DEFAULT_SCALAR_VALUE);
+      const n = clamp(dims.n, s.scalarConfigs.n ?? DEFAULT_SCALAR_VALUE);
+      const k = clamp(dims.k, s.scalarConfigs.k ?? DEFAULT_SCALAR_VALUE);
+
+      // By convention the first three pointer params are A (m×n), B (m×k), C (n×k) -see
+      // matmulValidation.ts. Their flat lengths follow the dims so a Run never reads out of bounds.
+      const bufferNames = sig.params.filter((p) => p.type === "int*" || p.type === "float*").map((p) => p.name);
+      const sizes = [m * n, m * k, n * k];
+      const bufferConfigs = { ...s.bufferConfigs };
+      bufferNames.slice(0, 3).forEach((name, i) => {
+        if (bufferConfigs[name]) bufferConfigs[name] = { ...bufferConfigs[name], size: sizes[i] };
+      });
+
+      return { scalarConfigs: { ...s.scalarConfigs, m, n, k }, bufferConfigs, ...STALE_RUN_RESET };
+    });
   },
 
   updateLaunchConfig: (patch) => {
-    set((s) => ({ launchConfig: { ...s.launchConfig, ...patch } }));
+    set((s) => ({ launchConfig: { ...s.launchConfig, ...patch }, ...STALE_RUN_RESET }));
   },
 
   startRun: () => {

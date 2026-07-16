@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useKernelVizStore } from "@/state/store";
+import { resolveFillValues, useKernelVizStore } from "@/state/store";
 import { bufferStateAt } from "@/lib/keyframe";
 
 export interface MemoryAccessHighlight {
@@ -25,11 +25,18 @@ export function useMemoryVisualState(bufferName: string): MemoryVisualState {
   const keyframes = useKernelVizStore((s) => s.keyframes);
   const currentStepIndex = useKernelVizStore((s) => s.currentStepIndex);
   const initialBufferValues = useKernelVizStore((s) => s.initialBufferValues);
+  const bufferConfig = useKernelVizStore((s) => s.bufferConfigs[bufferName]);
 
   const values = useMemo(() => {
-    if (steps.length === 0) return initialBufferValues[bufferName]?.slice() ?? [];
+    if (steps.length === 0) {
+      // No (current) run: the grid still shows something -a preview of the values the next Run
+      // would start from, at the currently-configured size. Keeps the matrices "always
+      // initialized", including on first page load and right after a config edit resizes them.
+      if (bufferConfig) return resolveFillValues(bufferConfig);
+      return initialBufferValues[bufferName]?.slice() ?? [];
+    }
     return bufferStateAt(steps, keyframes, currentStepIndex)[bufferName] ?? [];
-  }, [steps, keyframes, currentStepIndex, bufferName, initialBufferValues]);
+  }, [steps, keyframes, currentStepIndex, bufferName, initialBufferValues, bufferConfig]);
 
   const currentStep = steps[currentStepIndex];
   const activeAccesses: MemoryAccessHighlight[] = [];
